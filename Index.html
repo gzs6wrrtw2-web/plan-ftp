@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Plan FTP – méthode Watt/kg</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Source+Sans+3:wght@400;600&display=swap">
+<style>
+:root{--bg:#edf0ec;--card:#fbfcfa;--ink:#17262b;--mut:#5d6d70;--acc:#0b6b63;--kj:#b86f00;--bad:#b23b2b;--line:#cfd8d2;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121a1d;--card:#1a2529;--ink:#e6eeea;--mut:#9fb0b3;--acc:#4cc0b3;--kj:#e8a93a;--bad:#ef7d6b;--line:#2c3a3f;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#121a1d;--card:#1a2529;--ink:#e6eeea;--mut:#9fb0b3;--acc:#4cc0b3;--kj:#e8a93a;--bad:#ef7d6b;--line:#2c3a3f;color-scheme:dark}
+*{box-sizing:border-box}html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 "Source Sans 3",system-ui,sans-serif;max-width:760px;margin-inline:auto;padding:12px 14px 60px}
+h1,h2,h3{font-family:"Barlow Condensed","Arial Narrow",sans-serif;margin:0;letter-spacing:.2px}
+h1{font-size:30px}h2{font-size:22px;margin:18px 0 8px}h3{font-size:19px}
+nav{display:flex;gap:6px;margin:10px 0 4px}nav button{flex:1;padding:10px;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:8px;font-weight:600;font-size:15px;font-family:inherit}
+nav button.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;margin:10px 0}
+.card.done{border-left:5px solid var(--acc)}.card.off{opacity:.6}
+.row{display:flex;justify-content:space-between;gap:8px;align-items:baseline;flex-wrap:wrap}
+.kj{color:var(--kj);font-weight:600}.mut{color:var(--mut);font-size:14px}.bad{color:var(--bad)}
+.bar{height:10px;background:var(--line);border-radius:6px;overflow:hidden;margin:6px 0}.bar i{display:block;height:100%;background:var(--kj)}
+button.p{background:var(--acc);color:#fff;border:0;border-radius:8px;padding:9px 14px;font-weight:600;font-size:15px;font-family:inherit;cursor:pointer}
+button.s{background:none;border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:7px 12px;font-family:inherit;cursor:pointer}
+label{display:block;margin:8px 0 2px;font-size:14px;color:var(--mut)}
+input,select{width:100%;padding:9px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.note{background:var(--bg);border-left:4px solid var(--kj);padding:8px 10px;border-radius:6px;margin:8px 0;font-size:15px}
+table{width:100%;border-collapse:collapse;font-size:14px}td,th{padding:4px 6px;border-bottom:1px solid var(--line);text-align:left}
+</style>
+</head>
+<body>
+<h1>Plan FTP</h1>
+<div class="mut">Méthode Watt/kg : on pilote la charge en kJ, le plan s’ajuste après chaque séance.</div>
+<div class="mut" id="sync"></div>
+<nav id="nav"></nav>
+<main id="app"></main>
+<script>
+const LV=[{n:"Apprenti (3,5–4,5 W/kg)",lib:"b",k:["HIh","HIb"]},{n:"Ça devient sérieux (4–5 W/kg)",lib:"i",k:["HIb","MI"]},{n:"On passe la seconde (> 5 W/kg)",lib:"i",k:["MI","HIb"]},{n:"Direction les 1000 h",lib:"a",k:["MI","HIb"]}];
+const LIB={MI:{b:[[3,10,3],[4,8,2],[2,15,3],[1,30,0]],i:[[6,8,2],[5,10,2],[2,25,3],[4,15,2]],a:[[3,25,3],[8,10,2],[10,8,2],[6,15,2]]},
+HIb:{b:[[4,5,3],[4,6,2],[8,3,1]],i:[[6,5,3],[4,8,2],[6,6,2]],a:[[8,5,3],[15,3,1],[10,6,2]]},
+HIh:{b:[[3,5,3],[5,3,2]],i:[[4,4,4],[6,3,2],[4,5,3]],a:[[8,3,2],[6,4,4],[6,5,3]]}};
+const NOM={MI:"Moyenne intensité",HIb:"Haute intensité basse",HIh:"Haute intensité haute",BIc:"BI courte",BIz2:"BI avec blocs z2",BIl:"BI longue"};
+const FACT=[1,1.04,1.08,.75],SUMF=3.87,JOURS=["Lun","Mar","Mer","Jeu","Ven","Sam","Dim"];
+const DEF={p:{ftp:250,kg:70,lv:0,nk:1,ns:4,M:20000},cs:null,log:[],ftpH:[],tab:"w"};
+let S;try{S=JSON.parse(localStorage.getItem("ftp-plan")||"null")}catch(e){S=null}
+S=S||JSON.parse(JSON.stringify(DEF));
+let DB=null,UID=null,sync="local",lastW={},busy=false,dirty=false;
+const save=()=>{try{localStorage.setItem("ftp-plan",JSON.stringify(S))}catch(e){}persist()};
+const monday=d=>{d=new Date(d);d.setHours(12,0,0,0);d.setDate(d.getDate()-((d.getDay()+6)%7));return d};
+const iso=d=>d.toISOString().slice(0,10);
+if(!S.cs){S.cs=iso(monday(new Date()));save()}
+const wIdx=d=>Math.round((monday(d)-monday(S.cs))/6048e5);
+let viewW=wIdx(new Date()),editing=null;
+const B=()=>S.p.M/SUMF;
+const mnOf=(kj,P)=>kj*1000/(P*60);
+const kjOf=(P,min)=>P*min*60/1000;
+
+function keyBlocks(t,step){const L=LIB[t][LV[S.p.lv].lib],i=Math.min(step,L.length-1),o=Math.max(0,step-(L.length-1)),b=L[i];return{n:b[0]+o,m:b[1],r:b[2]}}
+function pct(t,m){return t==="MI"?.91:t==="HIb"?1.03:(m<=3?1.23:1.15)}
+function stepFor(t,w){let s=0;S.log.filter(l=>l.t===t&&l.w<w||l.t===t&&l.w===w&&false).sort((a,b)=>a.date<b.date?-1:1).forEach(l=>{if(l.res>=3&&l.fat<=3)s++;else if(l.fat>=4)s=Math.max(0,s-1)});return s}
+function keyKj(t,b,F,mult){const n=Math.max(1,Math.round(b.n*(mult||1)));const work=kjOf(F*pct(t,b.m),n*b.m),rec=kjOf(F*.5,(n-1)*b.r),wu=kjOf(F*.6,20)+kjOf(F*.55,10);return{n,kj:work+rec+wu,min:20+10+n*b.m+(n-1)*b.r}}
+
+function build(w,T){const F=S.p.ftp,lv=LV[S.p.lv],n=S.p.ns,nk=S.p.nk;
+ const days=n===4?[1,3,5,6]:n===5?[1,2,3,5,6]:[0,1,2,3,5,6];
+ const out=days.map(d=>({d,t:d===6?"BIl":d===5?"BIz2":"BIc"}));
+ let ki=0;out.forEach(s=>{if(s.d===1)s.t=lv.k[0];else if(s.d===3&&nk===2)s.t=lv.k[1]});
+ const longKj=Math.min(T*.30,T/3),satKj=T*.2;let used=longKj+satKj,nb=0;
+ out.forEach(s=>{if(s.t[0]==="B"&&s.t!=="BIl"&&s.t!=="BIz2")nb++;
+  if(s.t==="MI"||s.t==="HIb"||s.t==="HIh"){s.b=keyBlocks(s.t,stepFor(s.t,w));const k=keyKj(s.t,s.b,F,1);s.kj=k.kj;s.n=k.n;s.min=k.min;used+=k.kj}});
+ const rest=Math.max(0,T-used)/Math.max(1,nb);
+ out.forEach(s=>{if(s.t==="BIl"){s.kj=longKj;s.P=.65}else if(s.t==="BIz2"){s.kj=satKj;s.P=.7}else if(s.t==="BIc"){s.kj=rest;s.P=.65}});
+ return out}
+
+function plan(w){const T=B()*FACT[((w%4)+4)%4];let ss=build(w,T),mult=1,coupe=-1,done=S.log.filter(l=>l.w===w).reduce((a,l)=>a+l.kj,0),fut=[];const notes=[];
+ S.log.filter(l=>l.w===w&&l.x).sort((a,b)=>a.d-b.d).forEach(e=>{if(e.severe){coupe=Math.max(coupe,e.d+3);notes.push("Fatigue sévère signalée sur une séance hors plan : coupure de 2 à 4 jours.")}else if(e.fat>=4&&e.mot<=2){mult=Math.min(mult,.7);notes.push("Charge interne dans le rouge après une séance hors plan : volume des séances suivantes réduit de 30 %.")}else if(e.fat>=4||(e.res!=null&&e.res<=2)){mult=Math.min(mult,.85);notes.push("Jambes lourdes après une séance hors plan : volume des prochaines séances réduit de 15 %.")}});
+ ss.forEach(s=>{const e=S.log.find(l=>l.w===w&&l.d===s.d&&!l.x);
+  if(e){s.log=e;if(e.severe){coupe=Math.max(coupe,s.d+3);notes.push("Fatigue sévère signalée : coupure de 2 à 4 jours, basse intensité courte ensuite. On ne rattrape pas les kJ perdus.")}
+   else if(e.fat>=4&&e.mot<=2){mult=Math.min(mult,.7);notes.push("Charge interne dans le rouge : volume total et blocs des séances suivantes réduits de 30 %.")}
+   else if(e.fat>=4||(e.res!=null&&e.res<=2)){mult=Math.min(mult,.85);notes.push("Jambes lourdes : volume des prochaines séances réduit de 15 %.")}}
+  else if(s.d<=coupe){s.off=true}else fut.push(s)});
+ const keys=fut.filter(s=>s.b),bis=fut.filter(s=>!s.b);
+ keys.forEach(s=>{const k=keyKj(s.t,s.b,S.p.ftp,mult);s.n=k.n;s.kj=k.kj;s.min=k.min});
+ const need=T*mult-done-keys.reduce((a,s)=>a+s.kj,0),bw=bis.reduce((a,s)=>a+s.kj,0);
+ const sc=bw>0?Math.max(mult<1?.5:.75,Math.min(1.25,need/bw)):1;
+ bis.forEach(s=>{s.kj*=sc;if(s.t==="BIl")s.kj=Math.min(s.kj,T/3);s.min=mnOf(s.kj,s.P*S.p.ftp)});
+ if(bis.some(s=>s.t==="BIc"&&s.min<40))notes.push("Objectif en kJ trop bas pour ce nombre de séances (BI courtes inférieures à 40 min) : réduisez le nombre de séances ou augmentez l’objectif mensuel.");
+ const plannedLeft=fut.reduce((a,s)=>a+s.kj,0),gap=T*mult-done-plannedLeft;
+ if(gap>T*.05&&fut.length)notes.push(Math.round(gap)+" kJ non rattrapables cette semaine sans dépasser les limites par séance : ne compensez pas en intensité, ils seront absorbés par le bloc suivant.");
+ return{ss,T,done,notes,mult}}
+
+const fm=m=>{m=Math.round(m);return Math.floor(m/60)+" h "+String(m%60).padStart(2,"0")};
+const kjr=k=>Math.round(k).toLocaleString("fr-FR")+" kJ";
+function target(s){const F=S.p.ftp,w=x=>Math.round(F*x);
+ if(s.b){const p=pct(s.t,s.b.m);const rng=s.t==="MI"?[.88,.94]:s.t==="HIb"?[1,1.05]:[p-.02,p+.03];
+  return`Échauffement 20 min, puis <b>${s.n} × ${s.b.m} min</b>${s.b.r?` (récup ${s.b.r} min en z1)`:" en continu"} à <b>${w(rng[0])}–${w(rng[1])} W</b>, retour au calme 10 min. Durée ≈ ${fm(s.min)}.`}
+ if(s.t==="BIz2")return`≈ ${fm(s.min)} à ${w(.65)}–${w(.7)} W, avec 2 à 4 blocs de 20 min à ${w(.75)}–${w(.85)} W. Pédalez, limitez la roue libre.`;
+ return`≈ ${fm(s.min)} à ${w(.55)}–${w(.7)} W (cible ${w(.65)} W), sans dérive cardiaque. Conversation possible.`}
+
+function weekView(){const w=viewW,P=plan(w),mon=new Date(monday(S.cs));mon.setDate(mon.getDate()+7*w);
+ const pos=((w%4)+4)%4,dev=pos===3?"Semaine de décharge (−25 %)":"Semaine de développement "+(pos+1)+"/3";
+ const pc=Math.min(100,P.done/P.T*100);
+ let h=`<div class="row"><h2>Semaine du ${mon.toLocaleDateString("fr-FR",{day:"numeric",month:"long"})}</h2><span><button class="s" data-a="pw" data-v="-1">←</button> <button class="s" data-a="pw" data-v="1">→</button></span></div>
+ <div class="card"><div class="row"><b>${dev}</b><span class="kj">${kjr(P.done)} / ${kjr(P.T*P.mult)}</span></div><div class="bar"><i style="width:${pc}%"></i></div><div class="mut">Objectif mensuel ${kjr(S.p.M)} · FTP ${S.p.ftp} W (${(S.p.ftp/S.p.kg).toFixed(2).replace(".",",")} W/kg)</div></div>`;
+ P.notes.forEach(n=>h+=`<div class="note">${n}</div>`);
+ P.ss.forEach(s=>{const e=s.log,day=JOURS[s.d];
+  h+=`<div class="card ${e?"done":""} ${s.off?"off":""}"><div class="row"><h3>${day} · ${NOM[s.t]}</h3><span class="kj">${e?kjr(e.kj)+" réalisés":s.off?"Repos":"≈ "+kjr(s.kj)}</span></div>`;
+  if(s.off)h+=`<div class="mut">Coupure : repos complet ou 30 min très faciles.</div>`;
+  else if(e)h+=`<div class="mut">Prévu ${kjr(s.kj)} · ${e.dur} min · jambes ${e.res??"–"}/5 · fatigue ${e.fat??"–"}/5 · motivation ${e.mot??"–"}/5${e.fc?" · FC "+e.fc:""}</div><button class="s" data-a="ed" data-d="${s.d}">Modifier</button>`;
+  else h+=`<div>${target(s)}</div><div style="margin-top:8px"><button class="p" data-a="ed" data-d="${s.d}">Saisir la séance</button></div>`;
+  if(editing===s.d)h+=form(s);h+=`</div>`});
+ const ex=S.log.filter(l=>l.w===w&&(l.x||!P.ss.some(s=>s.d===l.d)));h+=`<div class="card"><div class="row"><b>Séances hors plan</b><button class="p" data-a="edx" data-v="new">+ Ajouter séance</button></div>`+ex.map(l=>`<div class="row" style="margin-top:6px"><span>${JOURS[l.d]} · <span class="kj">${kjr(l.kj)}</span> · ${l.dur} min${l.fat!=null?" · fatigue "+l.fat+"/5":""}</span><button class="s" data-a="edx" data-v="${l.id||"u"+l.d}">Modifier</button></div>${editing==="x:"+(l.id||"u"+l.d)?formX(l):""}`).join("")+(editing==="x:new"?formX(null):"")+`</div>`;
+ h+=`<div class="mut">Récupération complète : lundi et vendredi (selon votre nombre de séances). Une sortie longue ne dépasse jamais un tiers de la charge hebdomadaire.</div>`;return h}
+
+function form(s){const e=s.log||{},o=(v,sel)=>[1,2,3,4,5].map(i=>`<option ${i==(sel||3)?"selected":""}>${i}</option>`).join("");
+ return`<div style="border-top:1px solid var(--line);margin-top:10px;padding-top:6px"><div class="g2"><div><label>kJ réalisés</label><input id="f_kj" type="number" value="${Math.round(e.kj||s.kj||0)}"></div><div><label>Durée (min)</label><input id="f_dur" type="number" value="${e.dur||Math.round(s.min||60)}"></div><div><label>FC moyenne (facultatif)</label><input id="f_fc" type="number" value="${e.fc||""}"></div><div><label>Jambes (1 lourdes – 5 top)</label><select id="f_res">${o(0,e.res)}</select></div><div><label>Fatigue (1 nulle – 5 forte)</label><select id="f_fat">${o(0,e.fat||2)}</select></div><div><label>Motivation (1–5)</label><select id="f_mot">${o(0,e.mot||4)}</select></div><div><label>Stress quotidien (1–5)</label><select id="f_str">${o(0,e.str||2)}</select></div></div>
+ <label style="display:flex;gap:8px;align-items:center"><input id="f_sev" type="checkbox" style="width:auto" ${e.severe?"checked":""}> Sommeil dégradé et FC au repos nettement élevée</label>
+ <div style="margin-top:10px"><button class="p" data-a="sv" data-d="${s.d}">Enregistrer et adapter la suite</button> <button class="s" data-a="cx">Annuler</button> ${s.log?`<button class="s" data-a="del" data-d="${s.d}">Supprimer</button>`:""}</div></div>`}
+
+function monthStats(){const lim=iso(new Date(Date.now()-28*864e5)),L=S.log.filter(l=>l.date>=lim);
+ const a=k=>{const q=L.filter(l=>l[k]!=null);return q.length?q.reduce((x,l)=>x+l[k],0)/q.length:0};return{L,kj:L.reduce((x,l)=>x+l.kj,0),fat:a("fat"),mot:a("mot"),str:a("str"),res:a("res"),h:L.reduce((x,l)=>x+l.dur,0)/60}}
+function advice(m){const r=m.kj/S.p.M;if(m.L.length<6)return{txt:"Pas assez de séances enregistrées (6 minimum) pour un bilan fiable.",f:1};
+ const red=m.fat>=3.8||m.mot<=2.2,low=m.fat<3&&m.mot>=3.2;
+ if(r<.9&&low)return{txt:"Charge externe et interne basses : vous pouvez monter. Augmentez le volume total et le volume de travail des intervalles.",f:1.08};
+ if(r<.9&&red)return{txt:"Charge externe faible mais charge interne dans le rouge : risque de surcharge ou stress extérieur. Réduisez et vérifiez sommeil, nutrition, stress.",f:.85};
+ if(r>=.95&&red)return{txt:"Vous avez monté une marche trop haute : planifiez une semaine de décharge et repartez légèrement plus bas.",f:.9};
+ if(r>=.95)return{txt:"Charge externe tenue avec une charge interne stable : adaptation positive. Gardez le cap et montez doucement.",f:1.05};
+ return{txt:"Objectif presque atteint sans signal d’alerte : maintenez la charge et soyez régulier.",f:1};}
+function monthView(){const m=monthStats(),ad=advice(m),pc=Math.min(100,m.kj/S.p.M*100),nv=Math.round(S.p.M*ad.f/100)*100;
+ return`<h2>Bilan des 28 derniers jours</h2><div class="card"><div class="row"><b>Charge externe</b><span class="kj">${kjr(m.kj)} / ${kjr(S.p.M)}</span></div><div class="bar"><i style="width:${pc}%"></i></div>
+ <div class="mut">${m.L.length} séances · ${m.h.toFixed(1).replace(".",",")} h · jambes ${m.res.toFixed(1)}/5 · fatigue ${m.fat.toFixed(1)}/5 · motivation ${m.mot.toFixed(1)}/5 · stress ${m.str.toFixed(1)}/5</div></div>
+ <div class="note">${ad.txt}</div>
+ <div class="card"><div class="row"><b>Nouvel objectif mensuel proposé</b><span class="kj">${kjr(nv)}</span></div><div class="mut">Les semaines suivantes sont recalculées en cycle 3 semaines de développement (+4 %, +8 %) puis 1 semaine de décharge (−25 %).</div><div style="margin-top:8px"><button class="p" data-a="apply" data-v="${nv}">Appliquer cet objectif</button></div></div>
+ ${impView()}<h2>Test de FTP</h2><div class="card"><div class="mut">Entrez votre puissance critique, ou votre meilleure puissance sur 20 min (le calcul applique × 0,95).</div><div class="g2"><div><label>Puissance critique (W)</label><input id="t_cp" type="number"></div><div><label>Ou record 20 min (W)</label><input id="t_20" type="number"></div></div><div style="margin-top:8px"><button class="p" data-a="ftp">Mettre à jour la FTP</button></div>
+ ${S.ftpH.length?`<table style="margin-top:10px"><tr><th>Date</th><th>FTP</th></tr>${S.ftpH.slice(-6).reverse().map(x=>`<tr><td>${x.date}</td><td>${x.ftp} W</td></tr>`).join("")}</table>`:""}</div>`}
+
+let impMsg="";
+function parseCSV(t){const rows=[];let r=[],c="",q=false;for(let i=0;i<t.length;i++){const ch=t[i];if(q){if(ch==='"'){if(t[i+1]==='"'){c+='"';i++}else q=false}else c+=ch}else if(ch==='"')q=true;else if(ch===","){r.push(c);c=""}else if(ch==="\n"||ch==="\r"){if(ch==="\r"&&t[i+1]==="\n")i++;r.push(c);c="";rows.push(r);r=[]}else c+=ch}if(c||r.length){r.push(c);rows.push(r)}return rows}
+function importData(txt){const t=txt.trim();if(!t)return"Rien à importer : choisissez un fichier ou collez son contenu.";let acts;
+ if(t[0]==="["||t[0]==="{"){acts=JSON.parse(t);if(!Array.isArray(acts))acts=acts.activities||[acts]}
+ else{const rows=parseCSV(t),h=rows[0].map(x=>x.trim());acts=rows.slice(1).filter(r=>r.length>1).map(r=>Object.fromEntries(h.map((k,i)=>[k,r[i]])))}
+ const by={};acts.forEach(a=>{const ty=a.type||"";if(ty&&!/ride|cycl|bike/i.test(ty))return;const date=String(a.start_date_local||a.start_date||"").slice(0,10);if(!/^\d{4}-\d\d-\d\d$/.test(date))return;
+  const kj=(+a.icu_joules||(+a.icu_average_watts*(+a.moving_time)))/1000;if(!(kj>0))return;const g=by[date]||(by[date]={kj:0,dur:0,fc:0,n:0});g.kj+=kj;g.dur+=(+a.moving_time||0)/60;g.fc+=+a.average_heartrate||0;g.n++});
+ let nb=0,tot=0;Object.keys(by).forEach(date=>{const g=by[date],d0=new Date(date+"T12:00:00"),w=wIdx(d0),d=(d0.getDay()+6)%7,vals={kj:Math.round(g.kj),dur:Math.round(g.dur),fc:Math.round(g.fc/g.n)||0};
+  const ex=S.log.find(l=>l.w===w&&l.d===d&&!l.x);if(ex)Object.assign(ex,vals);else{const sx=plan(w).ss.find(s=>s.d===d);S.log.push(Object.assign({w,d,t:sx?sx.t:"ext",date,res:null,fat:null,mot:null,str:null,severe:false,imp:1},vals))}nb++;tot+=vals.kj});
+ return nb?nb+" jour(s) importé(s), "+kjr(tot)+". Ouvrez « Modifier » sur une séance pour ajouter jambes, fatigue et motivation : le plan s’adapte aussi à votre ressenti.":"Aucune sortie vélo avec des kJ (colonne icu_joules) trouvée dans ces données."}
+function formX(l){l=l||{};const o=sel=>[1,2,3,4,5].map(i=>`<option ${i==sel?"selected":""}>${i}</option>`).join(""),key=l.id||(l.d!=null?"u"+l.d:"new"),dd=l.d!=null?l.d:(new Date().getDay()+6)%7;
+ return`<div style="border-top:1px solid var(--line);margin-top:10px;padding-top:6px"><div class="g2"><div><label>Jour</label><select id="fx_d">${JOURS.map((j,i)=>`<option value="${i}" ${i===dd?"selected":""}>${j}</option>`).join("")}</select></div><div><label>kJ réalisés</label><input id="f_kj" type="number" value="${l.kj||""}"></div><div><label>Durée (min)</label><input id="f_dur" type="number" value="${l.dur||""}"></div><div><label>FC moyenne (facultatif)</label><input id="f_fc" type="number" value="${l.fc||""}"></div><div><label>Jambes (1 lourdes – 5 top)</label><select id="f_res">${o(l.res||3)}</select></div><div><label>Fatigue (1 nulle – 5 forte)</label><select id="f_fat">${o(l.fat||2)}</select></div><div><label>Motivation (1–5)</label><select id="f_mot">${o(l.mot||4)}</select></div><div><label>Stress quotidien (1–5)</label><select id="f_str">${o(l.str||2)}</select></div></div><label style="display:flex;gap:8px;align-items:center"><input id="f_sev" type="checkbox" style="width:auto" ${l.severe?"checked":""}> Sommeil dégradé et FC au repos nettement élevée</label><div style="margin-top:10px"><button class="p" data-a="svx" data-v="${key}">Enregistrer et adapter la suite</button> <button class="s" data-a="cx">Annuler</button> ${key!=="new"?`<button class="s" data-a="delx" data-v="${key}">Supprimer</button>`:""}</div></div>`}
+function impView(){return`<h2>Importer depuis intervals.icu</h2><div class="card"><div class="mut">Dans intervals.icu, calendrier des activités : téléchargez le CSV de vos activités. Vous pouvez aussi coller le JSON de l’API : <code>https://intervals.icu/api/v1/athlete/VOTRE_ID/activities?oldest=${iso(new Date(Date.now()-56*864e5))}&amp;fields=id,type,start_date_local,moving_time,icu_joules,average_heartrate</code>. Les kJ viennent de icu_joules, jour par jour.</div><label>Fichier CSV ou JSON</label><input id="imp_file" type="file" accept=".csv,.json,.txt"><label>… ou collez le contenu</label><textarea id="imp_txt" rows="4" style="width:100%;padding:9px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)"></textarea><div style="margin-top:8px"><button class="p" data-a="imp">Importer les sorties vélo</button></div>${impMsg?`<div class="note">${impMsg}</div>`:""}</div>`}
+function setView(){const p=S.p,F=p.ftp,z=[["z1 BI",.55,.75],["z2 BI haute",.76,.84],["z3 MI",.85,1],["z4 HI bas",1.01,1.13]];
+ return`<h2>Réglages</h2><div class="card"><div class="g2"><div><label>FTP / puissance critique (W)</label><input id="s_ftp" type="number" value="${p.ftp}"></div><div><label>Poids (kg)</label><input id="s_kg" type="number" value="${p.kg}"></div>
+ <div style="grid-column:1/3"><label>Niveau</label><select id="s_lv">${LV.map((l,i)=>`<option value="${i}" ${i===p.lv?"selected":""}>${l.n}</option>`).join("")}</select></div>
+ <div><label>Séances par semaine</label><select id="s_ns">${[4,5,6].map(n=>`<option ${n===p.ns?"selected":""}>${n}</option>`).join("")}</select></div>
+ <div><label>Séances clés (MI/HI) par semaine</label><select id="s_nk">${[1,2].map(n=>`<option ${n===p.nk?"selected":""}>${n}</option>`).join("")}</select></div>
+ <div style="grid-column:1/3"><label>Objectif mensuel de départ (kJ) : visez la moyenne de vos 8 dernières semaines, puis montez doucement</label><input id="s_M" type="number" value="${p.M}"></div></div>
+ <div style="margin-top:10px"><button class="p" data-a="set">Enregistrer</button></div></div>
+ <h2>Vos zones</h2><div class="card"><table>${z.map(x=>`<tr><td>${x[0]}</td><td>${Math.round(F*x[1])}–${Math.round(F*x[2])} W</td></tr>`).join("")}<tr><td>z5 HI haut</td><td>&gt; ${Math.round(F*1.13)} W</td></tr></table></div>
+ <div class="mut">Les données restent dans ce navigateur, sur cet appareil. <button class="s" data-a="rst">Tout effacer</button></div>`}
+
+function render(){document.getElementById("nav").innerHTML=[["w","Semaine"],["m","Mois"],["s","Réglages"]].map(t=>`<button class="${S.tab===t[0]?"on":""}" data-a="tab" data-v="${t[0]}">${t[1]}</button>`).join("");
+ document.getElementById("app").innerHTML=S.tab==="w"?weekView():S.tab==="m"?monthView():setView()}
+const val=id=>+document.getElementById(id).value;
+document.addEventListener("click",ev=>{const b=ev.target.closest("[data-a]");if(!b)return;const a=b.dataset.a,d=b.dataset.d!==undefined?+b.dataset.d:null,v=b.dataset.v;
+ if(a==="tab"){S.tab=v;editing=null}
+ else if(a==="pw")viewW+=+v;
+ else if(a==="ed")editing=d;
+ else if(a==="cx")editing=null;
+ else if(a==="sv"){const s=plan(viewW).ss.find(x=>x.d===d),mon=new Date(monday(S.cs));mon.setDate(mon.getDate()+7*viewW+d);
+  S.log=S.log.filter(l=>!(l.w===viewW&&l.d===d&&!l.x));
+  S.log.push({w:viewW,d,t:s.t,date:iso(mon),kj:val("f_kj"),dur:val("f_dur"),fc:val("f_fc")||0,res:val("f_res"),fat:val("f_fat"),mot:val("f_mot"),str:val("f_str"),severe:document.getElementById("f_sev").checked});editing=null}
+ else if(a==="del"){S.log=S.log.filter(l=>!(l.w===viewW&&l.d===d&&!l.x));editing=null}
+ else if(a==="edx")editing="x:"+v;
+ else if(a==="svx"){const mon=new Date(monday(S.cs)),dd=val("fx_d");mon.setDate(mon.getDate()+7*viewW+dd);const vals={d:dd,date:iso(mon),kj:val("f_kj"),dur:val("f_dur"),fc:val("f_fc")||0,res:val("f_res"),fat:val("f_fat"),mot:val("f_mot"),str:val("f_str"),severe:document.getElementById("f_sev").checked};
+  if(vals.kj>0){if(v==="new")S.log.push(Object.assign({id:"x"+Date.now().toString(36),w:viewW,t:"ext",x:1},vals));else{const e=S.log.find(l=>l.w===viewW&&(l.id||"u"+l.d)===v);if(e)Object.assign(e,vals)}editing=null}}
+ else if(a==="delx"){S.log=S.log.filter(l=>!(l.w===viewW&&(l.id||"u"+l.d)===v));editing=null}
+ else if(a==="apply")S.p.M=+v;
+ else if(a==="imp"){try{impMsg=importData(document.getElementById("imp_txt").value)}catch(e){impMsg="Contenu illisible : vérifiez qu’il s’agit du CSV ou du JSON d’intervals.icu."}}
+ else if(a==="ftp"){const f=val("t_cp")||Math.round(val("t_20")*.95);if(f>0){S.p.ftp=f;S.ftpH.push({date:iso(new Date()),ftp:f})}}
+ else if(a==="set"){S.p={ftp:val("s_ftp"),kg:val("s_kg"),lv:val("s_lv"),ns:val("s_ns"),nk:val("s_nk"),M:val("s_M")};S.ftpH.length||S.ftpH.push({date:iso(new Date()),ftp:S.p.ftp})}
+ else if(a==="rst"){if(confirm("Effacer toutes les données ?")){S=JSON.parse(JSON.stringify(DEF));S.cs=iso(monday(new Date()));viewW=0}}
+ save();render()});
+document.addEventListener("change",ev=>{if(ev.target.id!=="imp_file")return;const f=ev.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{document.getElementById("imp_txt").value=r.result};r.readAsText(f)});
+render();
+function showSync(){const el=document.getElementById("sync");if(el)el.textContent=sync==="cloud"?"Données sauvegardées en ligne, privées à votre compte.":sync==="err"?"Sauvegarde en ligne impossible pour l’instant : copie conservée sur cet appareil.":"Données enregistrées sur cet appareil uniquement."}
+function docsOf(){const m={};S.log.forEach(l=>{const k="log-"+String(l.date||"0000-00").slice(0,7);(m[k]=m[k]||[]).push(l)});const o={profile:{p:S.p,cs:S.cs,ftpH:S.ftpH}};Object.keys(m).forEach(k=>o[k]={entries:m[k]});Object.keys(lastW).forEach(k=>{if(k!=="profile"&&!o[k])o[k]={entries:[]}});return o}
+async function persist(){if(!DB||!UID)return;if(busy){dirty=true;return}busy=true;try{do{dirty=false;const o=docsOf();for(const k of Object.keys(o)){const s=JSON.stringify(o[k]);if(lastW[k]===s)continue;await DB.doc("data/users/"+UID+"/"+k).set(JSON.parse(s));lastW[k]=s}}while(dirty);sync="cloud"}catch(e){sync="err"}busy=false;showSync()}
+async function initDb(){try{if(!window.claude||!window.claude.use)return;const user=await claude.use("user"),db=await claude.use("db");if(!db||!user)return;UID=await user.id();if(!UID)return;DB=db;
+ const snap=await DB.collection("data/users/"+UID).get();
+ if(snap.empty){sync="cloud";showSync();await persist();return}
+ let prof=null,log=[];snap.docs.forEach(d=>{const x=JSON.parse(JSON.stringify(d.data()||{}));if(d.id==="profile")prof=x;else if(d.id.indexOf("log-")===0){log=log.concat(x.entries||[]);lastW[d.id]=JSON.stringify(x)}});
+ if(prof){lastW.profile=JSON.stringify(prof);S.p=prof.p||S.p;S.cs=prof.cs||S.cs;S.ftpH=prof.ftpH||[]}S.log=log;sync="cloud";
+ try{localStorage.setItem("ftp-plan",JSON.stringify(S))}catch(e){}render();showSync()}catch(e){sync="local";showSync()}}
+showSync();initDb();
+</script>
+</body>
+</html>
